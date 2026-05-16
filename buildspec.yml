@@ -1,14 +1,28 @@
 version: 0.2
 
+
 phases:
+
+  install:
+    runtime-versions:
+      docker: 20
+    commands:
+      - echo "Installing dependencies..."
+      - yum install -y jq
 
   pre_build:
     commands:
-      - echo "Logging into Amazon ECR..."
-      - aws ecr get-login-password --region $AWS_DEFAULT_REGION | docker login --username AWS --password-stdin $ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com
+      - echo "Logging in to Amazon ECR..."
+      - aws ecr get-login-password --region $AWS_DEFAULT_REGION \
+        | docker login --username AWS --password-stdin $ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com
+
       - REPOSITORY_URI=$ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com/$ECR_REPO
+
+      # Use commit id for unique tag
       - IMAGE_TAG=$(echo $CODEBUILD_RESOLVED_SOURCE_VERSION | cut -c 1-7)
       - IMAGE_URI=$REPOSITORY_URI:$IMAGE_TAG
+
+      - echo "Image URI: $IMAGE_URI"
 
   build:
     commands:
@@ -18,12 +32,19 @@ phases:
 
   post_build:
     commands:
+
+      # ✅ Push image
       - echo "Pushing image to ECR..."
       - docker push $IMAGE_URI
-      
-      - echo "Fetching current task definition..."
-      - aws ecs describe-task-definition --task-definition $TASK_FAMILY --query "taskDefinition" > task-def.json
 
+      # ✅ Get current task definition (ONLY clean portion)
+      - echo "Fetching current task definition..."
+      - aws ecs describe-task-definition \
+          --task-definition $TASK_FAMILY \
+          --query "taskDefinition" \
+          > task-def.json
+
+      # ✅ Update container image
       - echo "Updating task definition with new image..."
       - |
         jq --arg IMAGE "$IMAGE_URI" '
@@ -38,10 +59,12 @@ phases:
               .registeredBy
             )
         ' task-def.json > new-task-def.json
-        
+
+      # ✅ Debug (very useful)
       - echo "New task definition created:"
       - cat new-task-def.json
-      
+
+      # ✅ Register new task definition
       - echo "Registering new task definition revision..."
       - NEW_TASK_DEF_ARN=$(aws ecs register-task-definition \
           --cli-input-json file://new-task-def.json \
@@ -50,8 +73,8 @@ phases:
 
       - echo "New Task Definition ARN: $NEW_TASK_DEF_ARN"
 
-
-      - echo "Updating ECS service with new task definition..."
+      # ✅ Update ECS service (triggers deployment)
+      - echo "Updating ECS service..."
       - aws ecs update-service \
           --cluster $CLUSTER_NAME \
           --service $SERVICE_NAME \
