@@ -1,10 +1,9 @@
 version: 0.2
 
+
 phases:
 
   install:
-    runtime-versions:
-      docker: 20
     commands:
       - echo Installing jq
       - yum install -y jq
@@ -17,23 +16,17 @@ phases:
       - REPOSITORY_URI=$ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com/$ECR_REPO
       - IMAGE_TAG=$(echo $CODEBUILD_RESOLVED_SOURCE_VERSION | cut -c 1-7)
       - IMAGE_URI=$REPOSITORY_URI:$IMAGE_TAG
-      - echo Image URI is $IMAGE_URI
 
   build:
     commands:
-      - echo Building image
       - docker build -t $ECR_REPO .
       - docker tag $ECR_REPO:latest $IMAGE_URI
 
   post_build:
     commands:
-      - echo Pushing image
       - docker push $IMAGE_URI
-
-      - echo Fetching task definition
       - aws ecs describe-task-definition --task-definition $TASK_FAMILY --query "taskDefinition" > task-def.json
 
-      - echo Updating task definition JSON
       - |
           jq --arg IMAGE "$IMAGE_URI" '
           .containerDefinitions[0].image = $IMAGE
@@ -49,12 +42,8 @@ phases:
           )
           ' > new-task-def.json
 
-      - echo Registering new task definition
       - NEW_TASK_DEF_ARN=$(aws ecs register-task-definition --cli-input-json file://new-task-def.json --query "taskDefinition.taskDefinitionArn" --output text)
 
-      - echo New task definition ARN is $NEW_TASK_DEF_ARN
-
-      - echo Updating ECS service
       - aws ecs update-service --cluster $CLUSTER_NAME --service $SERVICE_NAME --task-definition $NEW_TASK_DEF_ARN
 
 artifacts:
